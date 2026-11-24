@@ -1,0 +1,28 @@
+{
+  "name": "harness-contents",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Harness contents service: versioned, permissioned store for dynamic skills, references and guidance",
+  "type": "module",
+  "engines": {
+    "node": ">=24.15"
+  },
+  "scripts": {
+    "dev": "node --watch src/main.ts",
+    "start": "node src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "test": "node --test 'src/**/*.test.ts'",
+    "check": "npm run typecheck && npm run lint && npm test"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.11",
+    "hono": "^4.13.21"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.8",
+    "@types/node": "^24.19.2",
+    "typescript": "^7.0.2"
+  }
+}

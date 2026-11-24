@@ -1,3 +1,6 @@
+/node_modules/
+/data/
+*.db
 # agent-harness:begin agent-harness
 /.output/
 /.harness/

@@ -4,13 +4,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-This repository is at the design stage. There is no source code, build system, or test suite yet, so there are no build/lint/test commands to run.
+Implementation follows the instructions in `instructions/` in order (0001 → 0009); each starts only when the user asks.
 
-- `references/SPEC.md` — the agreed specification v2 (2026-11-24) and the source of truth for what to build. `references/SPEC_ko.md` is its Korean translation; keep the two in sync. Implementation is on hold until the user explicitly asks for it.
+- `references/SPEC.md` — the agreed specification v2 (2026-11-24) and the source of truth for what to build. `references/SPEC_ko.md` is its Korean translation; keep the two in sync. If the implementation needs to differ from the spec, ask before changing either.
 - `agent-harness-tui` — the companion client (a separate Rust project). It is **not** in this repo; it generated `harness.toml`, `harness.lock.json`, `instructions/agent-db.*` and the managed block below. When available, run it from the project root; it never searches parent dirs, inits Git, commits, or pushes.
 - `CLAUDE_ko.md` — the Korean counterpart of this file. Guidance documents come in English/Korean pairs, so mirror changes made outside the managed block there.
 
-When source code is added, update this file with the real build/test commands.
+## Commands
+
+Node ≥ 24.15 runs the TypeScript sources directly (type stripping) — there is no build step. Use only erasable TypeScript syntax (no enums, namespaces or parameter properties) and import local files with the `.ts` extension.
+
+```sh
+npm install
+npm run dev          # node --watch src/main.ts
+npm start            # node src/main.ts (HCS_BIND=host:port, default 127.0.0.1:7878)
+npm run typecheck    # tsc --noEmit
+npm run lint         # biome check .   (npm run format to apply formatting)
+npm test             # node --test 'src/**/*.test.ts'
+npm run check        # typecheck + lint + test
+node --test src/http/app.test.ts                          # one test file
+node --test --test-name-pattern='health' 'src/**/*.test.ts'   # tests by name
+```
+
+Tests use `node:test` + `node:assert`; HTTP handlers are tested in-process with Hono's `app.request()`.
+
+## Code layout
+
+- `src/main.ts` — process entry: loads config, starts the Hono app on `@hono/node-server`.
+- `src/config.ts` — configuration from `HCS_*` environment variables.
+- `src/http/app.ts` — `createApp()` builds the Hono app; REST (`/v1`), MCP and web UI API (`/ui/api`) are mounted here as they are added.
+- Planned (per instructions): `src/storage/` (SQLite via `node:sqlite`), `src/domain/` (items, revisions, tags), `src/auth/`, `src/mcp/`, and the web UI.
 
 ## What this service is
 
