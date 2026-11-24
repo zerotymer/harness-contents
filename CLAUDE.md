@@ -6,43 +6,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This repository is at the design stage. There is no source code, build system, or test suite yet, so there are no build/lint/test commands to run.
 
-- `SPEC_DRAFT_ko.md` — the design draft (Korean) and the source of truth for what to build. Once agreed, an English `SPEC.md` is to be created alongside it; keep the two in sync.
-- `agent-harness-tui` — a prebuilt x86-64 Linux binary of the companion client project (a separate repo, written in Rust). It is checked in for reference/testing only; it is not built from this repo. `./agent-harness-tui --help` / `--version`. It must be run from a project root and never searches parent dirs, inits Git, commits, or pushes.
+- `references/SPEC.md` — the agreed specification v2 (2026-11-24) and the source of truth for what to build. `references/SPEC_ko.md` is its Korean translation; keep the two in sync. Implementation is on hold until the user explicitly asks for it.
+- `agent-harness-tui` — the companion client (a separate Rust project). It is **not** in this repo; it generated `harness.toml`, `harness.lock.json`, `instructions/agent-db.*` and the managed block below. When available, run it from the project root; it never searches parent dirs, inits Git, commits, or pushes.
+- `CLAUDE_ko.md` — the Korean counterpart of this file. Guidance documents come in English/Korean pairs, so mirror changes made outside the managed block there.
 
 When source code is added, update this file with the real build/test commands.
 
 ## What this service is
 
-"Harness contents service": a lightweight, read-only server that serves the parts of an agent dev-environment setup that must **not** be shared through Git — *dynamic skills*, *dynamic references*, and catalog JSON. Public material goes in Git, secrets go in env vars, and this service covers the rest. `agent-harness-tui` is its client.
+"Harness contents service": a multi-team service that stores and serves the **skills, references and guidance docs** that project agents use, outside Git, with permissions and version history. It only provides content; reflecting it into project files (stubs, guidance blocks) is the client's (`agent-harness-tui`) job.
 
-Key terms: a **dynamic skill** has its body only on the service (the project holds just a stub `SKILL.md` with name/description/how-to-fetch); a **dynamic reference** is a doc whose body lives only on the service; a **project** is a namespace on the service mapping to one target repository.
+Key terms: a **content repository** is the unit of sharing and visibility (`private`/`public`); an **item** is one `skill` (`SKILL.md` + supporting files such as scripts), `reference` or `guidance` doc; every save creates an immutable **revision**; **tags** point at revisions and `latest` always points at the newest (docker-style); a **project** is a consumer namespace mapped to one target Git repository and is granted `read`/`write` access to repositories.
 
-## Planned architecture (from the spec)
+## Planned design (spec v2, 2026-11-24)
 
-- **Single binary, single server**, multiple projects distinguished by config. No database — storage is a plain directory tree; editing files on disk takes effect on the next request:
-  ```
-  <data_dir>/projects/<project-id>/
-    catalogs/      # agents.json, skills.json, wiki.json, docs.json, hooks.json
-    skills/<name>/ # SKILL.md + supporting files
-    references/    # arbitrary files
-  ```
-- **Config `service.toml`** (`schema_version`, `bind` default `127.0.0.1:7878`, `data_dir`, `[[projects]]` with `id`, `auth = "open" | "token"`, `token_env`). Unknown keys are rejected. Token values come only from the env var named by `token_env`; if it is empty, the project is rejected at startup — never silently downgraded to `open`.
-- **REST API v1 (read-only):** `GET /health` (unauthenticated) and `/v1/projects/{pid}/{catalogs/{kind} | skills | skills/{name} | skills/{name}/files/{path} | references | references/{path}}`. Catalog format matches the `agent-harness-tui` catalog convention.
-  - Every response carries an `ETag` and honours `If-None-Match`.
-  - Errors are `application/problem+json`. Auth failure and not-found both return the same `404` so project existence isn't leaked.
-  - Normalize paths; reject `..`, absolute paths, and symlinks that escape `data_dir`.
-- **MCP:** thin tools (`list_skills`, `get_skill`, `list_references`, `get_reference`) over the same handlers as REST. Verify the transport and auth-header handling against the latest official MCP spec before implementing — do not guess.
+- One server program, one admin (v1). Three entry points over the same handlers and permission checks: web UI (default for humans), REST API v1, MCP (read tools, plus write tools for write tokens).
+- Tokens are issued by the server and stored only as hashes: project tokens with `read` or `write`, and an admin token. Anonymous access reads only `public` repositories. Auth failure and not-found return the same `404`.
+- Attributes: free-form md frontmatter key/values plus fixed `tags` and `version`. Reads default to `latest`; `ref` selects a tag or revision. `ETag` identifies a revision; writes require `If-Match`.
+- Items are addressed as `<repository UUID>/<item UUID>@<ref>`; no `@` means `latest`. Aliases are search-only (non-unique); identifiers, paths, aliases and tags compare case-insensitively. Changing frontmatter `version` auto-creates a version tag. Deletion is soft. Reuse is mainly by fork.
+- Storage: SQLite (WAL) with content-addressed (sha256) text blobs. The admin logs in with the `HCS_ADMIN_PASSWORD` env var and receives a server-generated, expiring admin token (Bearer header); the password is never stored. Admin tokens are for the web UI only (`/ui/api/*`; REST and MCP reject them), last 12 h, no rotation. Project tokens are never rotated: expiry (or none) is fixed at creation; the admin can revoke them. Admin features exist only in the web UI. Auth failures are logged in a fixed one-line format for fail2ban (spec §8-1). Soft delete only. Implementation: Node + TypeScript (stack in spec §11).
+- Catalog JSON and the client-side initial config (old §8-1) are dropped. Verify MCP transport and auth handling against the latest official MCP spec before implementing — do not guess.
 
 ## Invariants to preserve
 
-- Read-only; no shell execution; no filesystem access outside `data_dir`.
-- Never write tokens/secrets to files; never log tokens or content bodies in request logs.
-- Stubs never contain skill bodies. Fetched bodies are never stored in Git-tracked paths (only a Git-ignored cache like `.artifact/`).
-- Out of scope for v1: write API, WebDAV, remote sync, user/permission management, version history, wiki (md-gw) proxy.
+- The server never executes shell commands or stored scripts; it only stores and serves them.
+- Tokens are stored hashed only; never log tokens or content bodies.
+- Stubs never contain bodies; fetched bodies are never stored in Git-tracked paths (client-side rule).
 
-## Open questions (see spec §11)
+## Open questions (see spec §12)
 
-Per-project single token vs. scoped tokens; offline behaviour (fail vs. `.artifact/` cache); implementation language (Rust is being considered to share catalog-convention code with `agent-harness-tui`); which project owns the shared catalog convention. Don't settle these unilaterally — ask.
+Adjust MCP once its transport and auth are verified against the official spec; pick the SQLite driver and HTTP framework at implementation start. Don't settle these unilaterally — ask.
 
 <!-- agent-harness:begin agent-harness -->
 ## Agent harness
