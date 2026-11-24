@@ -99,7 +99,7 @@
 - 프로젝트 토큰의 권한은 웹·REST·MCP 모두에 똑같이 적용된다. **admin 토큰은 웹 UI API(`/ui/api/*`)에서만 받고, REST(`/v1/*`)와 MCP는 admin 토큰을 거부한다.**
 - 요청은 `Authorization: Bearer <token>`을 쓴다. **웹 UI도 같은 헤더를 쓴다:** 로그인 때 입력한 토큰을 브라우저 탭 메모리(또는 `sessionStorage`)에 두고 요청마다 헤더로 보낸다. 쿠키를 쓰지 않으므로 CSRF 대책이 필요 없다. 대신 md 미리보기는 반드시 정제(sanitize)해 스크립트 삽입(XSS)을 막는다.
 - 프로젝트 토큰 값은 발급할 때 한 번만 보여 준다. 서버는 해시만 저장한다. 만료는 §5-2.
-- 권한 없음과 없음은 같은 `404`로 응답해 비공개 대상의 존재를 드러내지 않는다.
+- 권한 없음과 없음은 같은 `404`로 응답해 비공개 대상의 존재를 드러내지 않는다(REST와 웹 UI API). MCP의 인증 실패는 표준 `401`을 쓴다(§6-2).
 
 ### 5-1. admin 로그인
 
@@ -145,7 +145,11 @@
   - 쓰기(`write` 토큰만): `put_item`, `fork_item`
 - 토큰 권한에 따라 보이는 도구가 달라진다.
 - **주소는 문자열 하나**(`address`)로 받는다: `<저장소 UUID>/<항목 UUID>[@<ref>]`. `list_items` 결과마다 완성된 `address`를 넣어 에이전트가 그대로 복사해 쓰게 한다. 도구 입력 스키마에 정규식 `pattern`을 걸어 잘못된 주소를 일찍 거른다. REST 경로와 같은 구문이라 문서와 로그에서도 하나로 통일된다.
-- 전송 방식(HTTP 계열)과 인증 헤더 처리는 **구현 전에 최신 MCP 공식 명세로 확인한다.** 추측하지 않는다.
+- **전송:** Streamable HTTP, 단일 엔드포인트 `POST /mcp`, 세션 없음. MCP 명세 2026-07-28 기준(2026-11-24 확인, MCP 명세가 개정되면 다시 확인).
+- **인증:** 모든 요청에 프로젝트 토큰을 `Authorization: Bearer <token>`으로 보낸다(쿼리 문자열 금지). 토큰이 없으면 `public` 저장소만 읽을 수 있다.
+  - 잘못된·만료된·폐기된 토큰이나 admin 토큰은 표준 `401 Unauthorized`와 `WWW-Authenticate: Bearer realm="hcs", error="invalid_token"`(RFC 6750)으로 응답한다. OAuth 흐름과 보호 자원 메타데이터는 제공하지 않는다.
+  - `/mcp`는 프로젝트별 주소가 아니므로 `401`이 프로젝트 존재를 드러내지 않는다. 도구 안에서는 권한 없음과 없음을 같은 오류로 돌려준다.
+- **Origin 검사:** `Origin` 헤더가 있는데 `HCS_ALLOWED_ORIGINS`에 없으면 `403 Forbidden`(MCP 명세가 요구하는 DNS 리바인딩 방지). `Origin`이 없는 요청(브라우저가 아닌 클라이언트)은 영향이 없다.
 
 ### 6-3. 웹 UI
 
@@ -198,7 +202,7 @@
 2026-11-24T07:30:00.123Z hcs auth_failed ip=203.0.113.5 kind=admin_login path=/ui/api/admin/login
 ```
 
-- `admin_login`: 비밀번호가 틀림. `bearer`: 없는·만료된·폐기된 토큰, 또는 REST·MCP에 admin 토큰을 보냄. (응답은 §5대로 `404`이지만 로그에는 실패로 남긴다.)
+- `admin_login`: 비밀번호가 틀림. `bearer`: 없는·만료된·폐기된 토큰, 또는 REST·MCP에 admin 토큰을 보냄. (REST는 §5대로 `404`, MCP는 §6-2대로 `401`로 응답하지만 어느 쪽이든 로그에는 실패로 남긴다.)
 - 비밀번호, 토큰 값, 본문은 절대 넣지 않는다.
 - 로그는 표준 출력으로 내보낸다. `HCS_LOG_FILE`을 주면 파일에도 쓴다(fail2ban이 파일이나 systemd journal 어느 쪽이든 읽을 수 있게).
 - 리버스 프록시 뒤에서는 `HCS_TRUSTED_PROXIES`에 적힌 주소에서 온 요청만 `X-Forwarded-For`를 믿는다. 그렇지 않으면 연결한 쪽 IP를 쓴다(프록시 IP가 차단되는 일을 막기 위해).
@@ -250,20 +254,24 @@ bantime  = 1h
 - 스크립트는 언어 제한 없음. 원본 파일명은 따로 저장한다. 서버는 해시와 리비전만 주고, 검토는 실행 쪽이 강제한다.
 - 웹 UI는 쿠키 없이 Bearer 헤더를 쓴다(CSRF 대책 불필요).
 - 크기 제한 기본값은 §7-1.
+- MCP: `POST /mcp`(Streamable HTTP, 세션 없음). 인증 실패는 표준 `401` + `WWW-Authenticate: Bearer`(RFC 6750). `Origin`은 `HCS_ALLOWED_ORIGINS`로 검사한다.
+- 기술 스택은 지시서 0001로 §11과 같이 확정: Hono, `node:sqlite`, MCP TypeScript SDK v2, Biome, `node:test`, 빌드 단계 없음.
 
-## 11. 기술 스택 (확정, 구현 착수 시 버전·상태 확인)
+## 11. 기술 스택 (지시서 0001로 확정, 2026-11-24)
 
 | 용도 | 후보 | 메모 |
 | --- | --- | --- |
 | 언어·런타임 | Node LTS + TypeScript | |
-| HTTP 서버 | Hono 또는 Fastify | 가볍고 TypeScript 친화적 |
-| SQLite | `better-sqlite3` 또는 내장 `node:sqlite` | `node:sqlite`는 안정화 상태를 확인하고 고른다 |
-| MCP | 공식 TypeScript SDK | 전송·인증은 최신 명세로 확인 |
+| 실행 | Node 24.15 이상이 TypeScript를 바로 실행(타입 제거) | 빌드 단계 없음, 타입 검사만 `tsc --noEmit`(TypeScript 7) |
+| HTTP 서버 | Hono + `@hono/node-server` | 웹 표준 Request/Response, 공식 MCP Hono 어댑터, `app.request()`로 프로세스 안 테스트 |
+| SQLite | 내장 `node:sqlite` | Node 24.15부터 Release candidate, 네이티브 빌드 불필요 |
+| MCP | `@modelcontextprotocol/server` + `@modelcontextprotocol/hono` (SDK v2) | 웹 표준 Streamable HTTP 전송, 세션 없는 방식 |
+| 린트·포맷 | Biome | |
+| 테스트 | `node:test` + `node:assert` | 추가 의존성 없음 |
 | md 편집기 | CodeMirror 6 | 가볍고 md 모드 있음 |
 | md 렌더링 + 정제 | markdown-it + DOMPurify | 미리보기 XSS 방지 |
 | diff 표시 | jsdiff (+ diff2html) | 리비전 비교 |
 
 ## 12. 열린 질문
 
-1. MCP 전송·인증 방식은 구현 착수 시 최신 공식 명세로 확인하고, 결과에 따라 §6-2를 조정한다.
-2. SQLite 드라이버(`better-sqlite3` / `node:sqlite`)와 HTTP 서버(Hono / Fastify)는 착수 시 하나로 고른다.
+현재 없음. (MCP 명세가 개정되면 §6-2를 다시 확인한다.)

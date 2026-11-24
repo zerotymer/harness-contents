@@ -44,11 +44,12 @@ Key terms: a **content repository** is the unit of sharing and visibility (`priv
 ## Planned design (spec v2, 2026-11-24)
 
 - One server program, one admin (v1). Three entry points over the same handlers and permission checks: web UI (default for humans), REST API v1, MCP (read tools, plus write tools for write tokens).
-- Tokens are issued by the server and stored only as hashes: project tokens with `read` or `write`, and an admin token. Anonymous access reads only `public` repositories. Auth failure and not-found return the same `404`.
+- Tokens are issued by the server and stored only as hashes: project tokens with `read` or `write`, and an admin token. Anonymous access reads only `public` repositories. Auth failure and not-found return the same `404` on REST and the web UI API (MCP uses `401`, see below).
 - Attributes: free-form md frontmatter key/values plus fixed `tags` and `version`. Reads default to `latest`; `ref` selects a tag or revision. `ETag` identifies a revision; writes require `If-Match`.
 - Items are addressed as `<repository UUID>/<item UUID>@<ref>`; no `@` means `latest`. Aliases are search-only (non-unique); identifiers, paths, aliases and tags compare case-insensitively. Changing frontmatter `version` auto-creates a version tag. Deletion is soft. Reuse is mainly by fork.
 - Storage: SQLite (WAL) with content-addressed (sha256) text blobs. The admin logs in with the `HCS_ADMIN_PASSWORD` env var and receives a server-generated, expiring admin token (Bearer header); the password is never stored. Admin tokens are for the web UI only (`/ui/api/*`; REST and MCP reject them), last 12 h, no rotation. Project tokens are never rotated: expiry (or none) is fixed at creation; the admin can revoke them. Admin features exist only in the web UI. Auth failures are logged in a fixed one-line format for fail2ban (spec §8-1). Soft delete only. Implementation: Node + TypeScript (stack in spec §11).
-- Catalog JSON and the client-side initial config (old §8-1) are dropped. Verify MCP transport and auth handling against the latest official MCP spec before implementing — do not guess.
+- MCP: Streamable HTTP at `POST /mcp`, stateless (MCP spec 2026-07-28). Auth failures there return the standard `401` + `WWW-Authenticate: Bearer realm="hcs", error="invalid_token"` (RFC 6750), unlike REST's `404`; `Origin` is checked against `HCS_ALLOWED_ORIGINS` (403). Re-check when the MCP spec is revised.
+- Catalog JSON and the client-side initial config (old §8-1) are dropped.
 
 ## Invariants to preserve
 
@@ -58,7 +59,7 @@ Key terms: a **content repository** is the unit of sharing and visibility (`priv
 
 ## Open questions (see spec §12)
 
-Adjust MCP once its transport and auth are verified against the official spec; pick the SQLite driver and HTTP framework at implementation start. Don't settle these unilaterally — ask.
+None at present. If something new comes up, don't settle it unilaterally — ask.
 
 <!-- agent-harness:begin agent-harness -->
 ## Agent harness

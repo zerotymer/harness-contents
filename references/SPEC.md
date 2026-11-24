@@ -99,7 +99,7 @@ Manage and serve the **skills, references and guidance docs** that project agent
 - Project-token permissions apply identically in the web UI, REST and MCP. **Admin tokens are accepted only by the web UI API (`/ui/api/*`); REST (`/v1/*`) and MCP reject them.**
 - Requests use `Authorization: Bearer <token>`. **The web UI uses the same header:** the token entered at login is kept in tab memory (or `sessionStorage`) and sent as a header on every request. No cookies are used, so no CSRF protection is needed. In exchange, the md preview must always be sanitized to prevent script injection (XSS).
 - A project token's value is shown once, at issuance. The server stores only its hash. Expiry: §5-2.
-- "Not permitted" and "not found" return the same `404` so private targets' existence is not revealed.
+- "Not permitted" and "not found" return the same `404` so private targets' existence is not revealed (REST and web UI API). MCP authentication failures use the standard `401` instead (§6-2).
 
 ### 5-1. Admin login
 
@@ -145,7 +145,11 @@ Manage and serve the **skills, references and guidance docs** that project agent
   - Write (`write` tokens only): `put_item`, `fork_item`
 - The visible tools depend on the token's permissions.
 - **Addresses are a single string** (`address`): `<repository UUID>/<item UUID>[@<ref>]`. Every `list_items` result includes the complete `address` so agents can copy it verbatim. Tool input schemas carry a regex `pattern` to reject malformed addresses early. It is the same syntax as the REST path, so docs and logs use one form.
-- Verify the transport (HTTP-based) and auth-header handling against the **latest official MCP specification before implementing.** Do not guess.
+- **Transport:** Streamable HTTP at a single endpoint `POST /mcp`, stateless (no sessions), per MCP specification 2026-07-28 (verified 2026-11-24; re-check when the MCP spec is revised).
+- **Authentication:** a project token in `Authorization: Bearer <token>` on every request (never in the query string). Without a token, only `public` repositories can be read.
+  - A missing-but-required, invalid, expired or revoked token, or an admin token, gets the standard `401 Unauthorized` with `WWW-Authenticate: Bearer realm="hcs", error="invalid_token"` (RFC 6750). No OAuth flow and no protected-resource metadata are offered.
+  - `/mcp` is a single endpoint not tied to a project, so `401` reveals no project's existence. Inside tools, "not permitted" and "not found" return the same error.
+- **Origin check:** if an `Origin` header is present and not listed in `HCS_ALLOWED_ORIGINS`, respond `403 Forbidden` (DNS-rebinding protection required by the MCP spec). Requests without `Origin` (non-browser clients) are not affected.
 
 ### 6-3. Web UI
 
@@ -198,7 +202,7 @@ Example:
 2026-11-24T07:30:00.123Z hcs auth_failed ip=203.0.113.5 kind=admin_login path=/ui/api/admin/login
 ```
 
-- `admin_login`: wrong password. `bearer`: missing, expired or revoked token, or an admin token sent to REST/MCP. (The response is `404` per §5, but the log records a failure.)
+- `admin_login`: wrong password. `bearer`: unknown, expired or revoked token, or an admin token sent to REST/MCP. (REST answers `404` per §5 and MCP `401` per §6-2; either way the log records a failure.)
 - Never include passwords, token values or bodies.
 - Logs go to standard output. If `HCS_LOG_FILE` is set, they are also written to that file (so fail2ban can read either the file or the systemd journal).
 - Behind a reverse proxy, `X-Forwarded-For` is trusted only for requests coming from addresses listed in `HCS_TRUSTED_PROXIES`; otherwise the connecting IP is used (so the proxy's own IP is not banned).
@@ -250,20 +254,24 @@ Multiple admins, per-team admin delegation, permanent deletion, rate limiting, p
 - Scripts in any language. Original file names stored separately. The server provides only hash and revision; the executing side enforces review.
 - The web UI uses the Bearer header without cookies (no CSRF protection needed).
 - Default size limits: §7-1.
+- MCP: `POST /mcp` (Streamable HTTP, stateless). Authentication failures return the standard `401` + `WWW-Authenticate: Bearer` (RFC 6750); `Origin` is validated against `HCS_ALLOWED_ORIGINS`.
+- Tech stack fixed per §11 after instruction 0001: Hono, `node:sqlite`, MCP TypeScript SDK v2, Biome, `node:test`, no build step.
 
-## 11. Tech stack (fixed; check versions and status at implementation start)
+## 11. Tech stack (fixed by instruction 0001, 2026-11-24)
 
 | Purpose | Choice | Note |
 | --- | --- | --- |
 | Language & runtime | Node LTS + TypeScript | |
-| HTTP server | Hono or Fastify | Lightweight, TypeScript-friendly |
-| SQLite | `better-sqlite3` or built-in `node:sqlite` | Check `node:sqlite` stability before choosing |
-| MCP | Official TypeScript SDK | Verify transport and auth against the latest spec |
+| Execution | Node ≥ 24.15 runs TypeScript directly (type stripping) | No build step; `tsc --noEmit` (TypeScript 7) for type checking only |
+| HTTP server | Hono + `@hono/node-server` | Web-standard Request/Response; official MCP Hono adapter; in-process tests via `app.request()` |
+| SQLite | built-in `node:sqlite` | Release candidate since Node 24.15; no native build |
+| MCP | `@modelcontextprotocol/server` + `@modelcontextprotocol/hono` (SDK v2) | Web-standard Streamable HTTP transport, stateless mode |
+| Lint & format | Biome | |
+| Tests | `node:test` + `node:assert` | No extra dependency |
 | md editor | CodeMirror 6 | Lightweight, has an md mode |
 | md rendering + sanitizing | markdown-it + DOMPurify | Prevents XSS in previews |
 | Diff view | jsdiff (+ diff2html) | Revision comparison |
 
 ## 12. Open questions
 
-1. Verify the MCP transport and auth handling against the latest official specification at implementation start, and adjust §6-2 accordingly.
-2. Pick one SQLite driver (`better-sqlite3` / `node:sqlite`) and one HTTP server (Hono / Fastify) at implementation start.
+None at present. (Re-check §6-2 when the MCP specification is revised.)
