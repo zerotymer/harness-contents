@@ -4,13 +4,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-This repository is at the design stage. There is no source code, build system, or test suite yet, so there are no build/lint/test commands to run.
+Implementation follows the instructions in `instructions/` in order (0001 → 0009); each starts only when the user asks.
 
-- `references/SPEC.md` — the agreed specification v2 (2026-11-24) and the source of truth for what to build. `references/SPEC_ko.md` is its Korean translation; keep the two in sync. Implementation is on hold until the user explicitly asks for it.
+- `references/SPEC.md` — the agreed specification v2 (2026-11-24) and the source of truth for what to build. `references/SPEC_ko.md` is its Korean translation; keep the two in sync. If the implementation needs to differ from the spec, ask before changing either.
 - `agent-harness-tui` — the companion client (a separate Rust project). It is **not** in this repo; it generated `harness.toml`, `harness.lock.json`, `instructions/agent-db.*` and the managed block below. When available, run it from the project root; it never searches parent dirs, inits Git, commits, or pushes.
 - `CLAUDE_ko.md` — the Korean counterpart of this file. Guidance documents come in English/Korean pairs, so mirror changes made outside the managed block there.
 
-When source code is added, update this file with the real build/test commands.
+## Commands
+
+Node ≥ 24.15 runs the TypeScript sources directly (type stripping) — there is no build step. Use only erasable TypeScript syntax (no enums, namespaces or parameter properties) and import local files with the `.ts` extension.
+
+```sh
+npm install
+npm run dev          # node --watch src/main.ts
+npm start            # node src/main.ts (HCS_BIND=host:port, default 127.0.0.1:7878)
+npm run typecheck    # tsc --noEmit
+npm run lint         # biome check .   (npm run format to apply formatting)
+npm test             # node --test 'src/**/*.test.ts'
+npm run check        # typecheck + lint + test
+node --test src/http/app.test.ts                          # one test file
+node --test --test-name-pattern='health' 'src/**/*.test.ts'   # tests by name
+```
+
+Tests use `node:test` + `node:assert`; HTTP handlers are tested in-process with Hono's `app.request()`.
+
+## Code layout
+
+- `src/main.ts` — process entry: loads config, starts the Hono app on `@hono/node-server`.
+- `src/config.ts` — configuration from `HCS_*` environment variables.
+- `src/http/app.ts` — `createApp()` builds the Hono app; REST (`/v1`), MCP and web UI API (`/ui/api`) are mounted here as they are added.
+- Planned (per instructions): `src/storage/` (SQLite via `node:sqlite`), `src/domain/` (items, revisions, tags), `src/auth/`, `src/mcp/`, and the web UI.
 
 ## What this service is
 
@@ -21,11 +44,12 @@ Key terms: a **content repository** is the unit of sharing and visibility (`priv
 ## Planned design (spec v2, 2026-11-24)
 
 - One server program, one admin (v1). Three entry points over the same handlers and permission checks: web UI (default for humans), REST API v1, MCP (read tools, plus write tools for write tokens).
-- Tokens are issued by the server and stored only as hashes: project tokens with `read` or `write`, and an admin token. Anonymous access reads only `public` repositories. Auth failure and not-found return the same `404`.
+- Tokens are issued by the server and stored only as hashes: project tokens with `read` or `write`, and an admin token. Anonymous access reads only `public` repositories. Auth failure and not-found return the same `404` on REST and the web UI API (MCP uses `401`, see below).
 - Attributes: free-form md frontmatter key/values plus fixed `tags` and `version`. Reads default to `latest`; `ref` selects a tag or revision. `ETag` identifies a revision; writes require `If-Match`.
 - Items are addressed as `<repository UUID>/<item UUID>@<ref>`; no `@` means `latest`. Aliases are search-only (non-unique); identifiers, paths, aliases and tags compare case-insensitively. Changing frontmatter `version` auto-creates a version tag. Deletion is soft. Reuse is mainly by fork.
 - Storage: SQLite (WAL) with content-addressed (sha256) text blobs. The admin logs in with the `HCS_ADMIN_PASSWORD` env var and receives a server-generated, expiring admin token (Bearer header); the password is never stored. Admin tokens are for the web UI only (`/ui/api/*`; REST and MCP reject them), last 12 h, no rotation. Project tokens are never rotated: expiry (or none) is fixed at creation; the admin can revoke them. Admin features exist only in the web UI. Auth failures are logged in a fixed one-line format for fail2ban (spec §8-1). Soft delete only. Implementation: Node + TypeScript (stack in spec §11).
-- Catalog JSON and the client-side initial config (old §8-1) are dropped. Verify MCP transport and auth handling against the latest official MCP spec before implementing — do not guess.
+- MCP: Streamable HTTP at `POST /mcp`, stateless (MCP spec 2026-07-28). Auth failures there return the standard `401` + `WWW-Authenticate: Bearer realm="hcs", error="invalid_token"` (RFC 6750), unlike REST's `404`; `Origin` is checked against `HCS_ALLOWED_ORIGINS` (403). Re-check when the MCP spec is revised.
+- Catalog JSON and the client-side initial config (old §8-1) are dropped.
 
 ## Invariants to preserve
 
@@ -35,7 +59,7 @@ Key terms: a **content repository** is the unit of sharing and visibility (`priv
 
 ## Open questions (see spec §12)
 
-Adjust MCP once its transport and auth are verified against the official spec; pick the SQLite driver and HTTP framework at implementation start. Don't settle these unilaterally — ask.
+None at present. If something new comes up, don't settle it unilaterally — ask.
 
 <!-- agent-harness:begin agent-harness -->
 ## Agent harness

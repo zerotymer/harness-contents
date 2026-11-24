@@ -4,13 +4,36 @@
 
 ## 현재 상태
 
-이 저장소는 설계 단계다. 소스 코드, 빌드 시스템, 테스트가 아직 없으므로 실행할 빌드·린트·테스트 명령도 없다.
+구현은 `instructions/`의 지시서 순서(0001 → 0009)를 따르며, 각 지시서는 사용자가 요청할 때 시작한다.
 
-- `references/SPEC.md` — 합의된 명세 v2(2026-11-24). 무엇을 만들지에 대한 기준 문서다. `references/SPEC_ko.md`는 그 한국어 번역본이며 두 파일을 함께 맞춘다. 구현은 사용자가 명시적으로 요청할 때까지 보류한다.
+- `references/SPEC.md` — 합의된 명세 v2(2026-11-24). 무엇을 만들지에 대한 기준 문서다. `references/SPEC_ko.md`는 그 한국어 번역본이며 두 파일을 함께 맞춘다. 구현이 명세와 달라져야 하면 어느 쪽도 바꾸기 전에 먼저 묻는다.
 - `agent-harness-tui` — 짝을 이루는 클라이언트(별도 Rust 프로젝트). 이 저장소에는 **없다.** `harness.toml`, `harness.lock.json`, `instructions/agent-db.*`, 아래 관리 블록을 이 도구가 만들었다. 실행할 때는 프로젝트 루트에서 실행한다. 상위 디렉터리를 찾거나 Git 초기화·커밋·푸시를 하지 않는다.
 - `CLAUDE_ko.md` — `CLAUDE.md`의 한국어 짝(이 파일). 지침 문서는 영어·한국어 쌍으로 둔다.
 
-소스 코드가 추가되면 실제 빌드·테스트 명령을 이 문서에 적는다.
+## 명령
+
+Node 24.15 이상이 TypeScript 소스를 바로 실행한다(타입 제거 방식). 빌드 단계는 없다. 지울 수 있는 TypeScript 문법만 쓰고(enum, namespace, 매개변수 속성 금지), 로컬 파일은 `.ts` 확장자로 import한다.
+
+```sh
+npm install
+npm run dev          # node --watch src/main.ts
+npm start            # node src/main.ts (HCS_BIND=host:port, 기본 127.0.0.1:7878)
+npm run typecheck    # tsc --noEmit
+npm run lint         # biome check .   (포맷 적용은 npm run format)
+npm test             # node --test 'src/**/*.test.ts'
+npm run check        # typecheck + lint + test
+node --test src/http/app.test.ts                          # 테스트 파일 하나
+node --test --test-name-pattern='health' 'src/**/*.test.ts'   # 이름으로 고르기
+```
+
+테스트는 `node:test` + `node:assert`를 쓰고, HTTP 핸들러는 Hono의 `app.request()`로 프로세스 안에서 테스트한다.
+
+## 코드 구조
+
+- `src/main.ts` — 프로세스 시작점: 설정을 읽고 `@hono/node-server`로 Hono 앱을 띄운다.
+- `src/config.ts` — `HCS_*` 환경변수에서 읽는 설정.
+- `src/http/app.ts` — `createApp()`이 Hono 앱을 만든다. REST(`/v1`), MCP, 웹 UI API(`/ui/api`)는 추가될 때 여기에 붙인다.
+- 예정(지시서 기준): `src/storage/`(`node:sqlite` 기반 SQLite), `src/domain/`(항목·리비전·태그), `src/auth/`, `src/mcp/`, 웹 UI.
 
 ## 이 서비스는 무엇인가
 
@@ -21,11 +44,12 @@
 ## 계획된 설계 (명세 v2, 2026-11-24)
 
 - 서버 프로그램 하나, admin 한 명(v1). 같은 핸들러와 권한 검사 위에 접점 셋: 웹 UI(사람의 기본 접점), REST API v1, MCP(읽기 도구, `write` 토큰이면 쓰기 도구도).
-- 토큰은 서버가 발급하고 해시만 저장한다. 프로젝트 토큰(`read` 또는 `write`)과 admin 토큰이 있다. 토큰 없이는 `public` 저장소만 읽을 수 있다. 권한 없음과 없음은 같은 `404`.
+- 토큰은 서버가 발급하고 해시만 저장한다. 프로젝트 토큰(`read` 또는 `write`)과 admin 토큰이 있다. 토큰 없이는 `public` 저장소만 읽을 수 있다. 권한 없음과 없음은 REST와 웹 UI API에서 같은 `404`(MCP는 `401`, 아래 참고).
 - 속성: md frontmatter의 자유 key-value + 고정 `tags`, `version`. 기본으로 `latest`를 읽고 `ref`로 태그나 리비전을 고른다. `ETag`는 리비전을 가리키고, 쓰기는 `If-Match`가 필요하다.
 - 항목 주소는 `<저장소 UUID>/<항목 UUID>@<ref>`이며, `@`가 없으면 `latest`다. 별칭은 검색 전용(중복 허용)이고, 식별자·경로·별칭·태그는 대소문자를 구분하지 않는다. frontmatter의 `version`이 바뀌면 버전 태그가 자동으로 생긴다. 삭제는 소프트 삭제. 재사용은 주로 복제(fork)로 한다.
 - 저장: SQLite(WAL) + sha256 내용 주소 텍스트 본문. admin은 환경변수 `HCS_ADMIN_PASSWORD`로 로그인해 서버가 자동 생성한, 만료가 있는 admin 토큰(Bearer 헤더)을 받는다. 비밀번호는 저장하지 않는다. admin 토큰은 웹 UI 전용(`/ui/api/*`, REST·MCP는 거부), 12시간, 로테이션 없음. 프로젝트 토큰은 로테이션하지 않으며 만료일(무기한 가능)은 생성 시 정하고, admin이 폐기할 수 있다. 관리 기능은 웹 UI에만 있다. 인증 실패는 fail2ban용 고정 형식 한 줄로 로그에 남긴다(명세 §8-1). 삭제는 소프트 삭제만. 구현은 Node + TypeScript(기술 스택은 명세 §11).
-- 카탈로그 JSON과 클라이언트 초기 구성(구 §8-1)은 폐기했다. MCP 전송 방식과 인증 처리는 구현 전에 최신 MCP 공식 명세로 확인한다. 추측하지 않는다.
+- MCP: `POST /mcp`의 Streamable HTTP, 세션 없음(MCP 명세 2026-07-28). 여기서의 인증 실패는 REST의 `404`와 달리 표준 `401` + `WWW-Authenticate: Bearer realm="hcs", error="invalid_token"`(RFC 6750)으로 응답한다. `Origin`은 `HCS_ALLOWED_ORIGINS`로 검사한다(403). MCP 명세가 개정되면 다시 확인한다.
+- 카탈로그 JSON과 클라이언트 초기 구성(구 §8-1)은 폐기했다.
 
 ## 지켜야 할 원칙
 
@@ -35,7 +59,7 @@
 
 ## 열린 질문 (명세 §12)
 
-MCP 전송·인증을 공식 명세로 확인한 뒤 조정 / 구현 착수 시 SQLite 드라이버와 HTTP 서버 선택. 혼자 결정하지 말고 묻는다.
+현재 없음. 새로 생기면 혼자 결정하지 말고 묻는다.
 
 <!-- agent-harness:begin agent-harness -->
 ## 에이전트 하네스
