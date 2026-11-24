@@ -1,0 +1,16 @@
+schema_version = 1
+sources = []
+skills = []
+
+[paths]
+instructions = "instructions"
+references = "references"
+output = ".output"
+
+[backlog]
+enabled = true
+path = "instructions/agent.db"
+
+[[agents]]
+id = "claude-code"
+placement = "copy"

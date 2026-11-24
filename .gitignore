@@ -1,0 +1,8 @@
+# agent-harness:begin agent-harness
+/.output/
+/.harness/
+/instructions/agent.db
+/instructions/agent.db-wal
+/instructions/agent.db-shm
+/instructions/agent.db-journal
+# agent-harness:end agent-harness
